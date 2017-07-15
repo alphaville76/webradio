@@ -13,14 +13,16 @@ ESC=$'\x1b'
 
 print_title_pid=-1
 function print_title {
-	kill $print_title_pid
+	if [ $print_title_pid -ne "-1" ]; then
+	  kill $print_title_pid
+        fi
 	while true
 	do
 		title=$(grep -a 'StreamTitle' mplayer.log |tail -1)
 		title=${title:23}
 		title=${title%%\';*}
 		echo $title
-		sleep 2
+		sleep 5
 	done
 }
 
