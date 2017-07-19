@@ -1,6 +1,6 @@
 #!/bin/bash
 
-APP_HOME="/home/pi/webradio" 
+APP_HOME=`dirname "$0"`
 ARROW_UP=$'\x1b[A'
 ARROW_DOWN=$'\x1b[B'
 ARROW_RIGHT=$'\x1b[C'
@@ -11,81 +11,100 @@ INSERT=$'\x1b[1'
 DELETE=$'\x1b[2'
 ESC=$'\x1b'
 
-print_title_pid=-1
-function print_title {
-	if [ $print_title_pid -ne "-1" ]; then
-	  kill $print_title_pid
+current_channel=""
+current_channel_name=""
+current_title=""
+
+# Read the stream title from mplayer logs every 5 seconds
+update_display_pid=-1
+update_display() {
+	if [ $update_display_pid -ne "-1" ]; then
+	  kill $update_display_pid
         fi
 	while true
 	do
 		title=$(grep -a 'StreamTitle' mplayer.log |tail -1)
 		title=${title:23}
 		title=${title%%\';*}
-		echo $title
+
+    if [ "$current_title" != "$title" ]; then
+      echo $title
+      current_title=$title
+    fi
 		sleep 5
 	done
 }
 
-source $APP_HOME/channels.sh
+# Increment/decrement volume
+set_volume() {
+  increment = $1
+  volume=$(amixer get PCM |grep % |awk '{print $4}'|sed 's/[^0-9]//g')
+  volume=$((volume + $increment))
+  if [ "$volume" -gt "100" ]; then volume=100; fi
+  if [ "$volume" -lt "0" ]; then volume=0; fi
+  amixer sset PCM $volume%
+  top=$((volume / 10))
+  for ((n=1; n<=$top; n++)); do echo -n "#"; done
+  
+  echo " $volume%"
+}
 
+
+###############################################################################
+#                                                                             #
+#                                   Main                                      #
+#                                                                             #
+###############################################################################
+source $APP_HOME/channels.sh
 END=${#name[@]} 
 
-i=$(cat $APP_HOME/current_channel)
-j=$i
-echo $i: ${name[$i]}
-mplayer "${url[$i]}" < /dev/null > $APP_HOME/mplayer.log 2>&1 &
-pid=$!
-print_title &
-print_title_pid=$!
+current_channel=$(cat $APP_HOME/current_channel)
+current_channel_name=${name[$current_channel]}
+echo $current_channel: $current_channel_name
+mplayer "${url[$current_channel]}" < /dev/null > $APP_HOME/mplayer.log 2>&1 & mplayer_pid=$!
+update_display & update_display_pid=$!
 
-while IFS= read -n 1 x; while read -n 1 -t .3 y; do x="$x$y"; done
+selected_channel=$current_channel
+while IFS= read -n 1 key; while read -n 1 -t .3 key_2nd; do key="$key$key_2nd"; done
 do
-  case "$x" in
-    $ARROW_LEFT*)	i=$((i - 1));;
-    $ARROW_RIGHT*)	i=$((i + 1));;
+  case "$key" in
+    $ARROW_LEFT*)	
+      selected_channel=$((selected_channel - 1))
+    ;;
+    $ARROW_RIGHT*)
+      selected_channel=$((selected_channel + 1))
+    ;;
     $ARROW_UP*)
-      volume=$(amixer get PCM |grep % |awk '{print $4}'|sed 's/[^0-9]//g')
-      volume=$((volume + 5))
-      if [ "$i" -gt "100" ]; then volume=100; fi
-      amixer sset PCM $volume%
-      top=$((volume / 10))
-      for ((n=1; n<=$top; n++)); do echo -n "#"; done
-      echo " $volume%"
+      set_volume +5
     ;;
     $ARROW_DOWN*)
-      volume=$(amixer get PCM |grep % |awk '{print $4}'|sed 's/[^0-9]//g')
-      volume=$((volume - 5))
-      if [ "$i" -lt "0" ]; then volume=0; fi
-      amixer sset PCM $volume%
-      top=$((volume / 10))
-      for ((n=1; n<=$top; n++)); do echo -n "#"; done
-      echo " $volume%"
+      set_volume -5
     ;;
     m)
+      # mute/unmute
       amixer sset PCM toggle|tail -1
     ;;
     q) 
-      kill $pid
-      kill $print_title_pid 
+      kill $mplayer_pid
+      kill $update_display_pid 
       exit 0
     ;;
     *)
-      if [ "$x" -ge "1" ] && [ "$x" -le "$END" ]; then i=$x; fi;;    
+      if [ "$key" -ge "1" ] && [ "$key" -le "$END" ]; then selected_channel=$key; fi;;    
   esac
 
-  if [ "$i" -lt "1" ]; then i=$END; fi
-  if [ "$i" -gt "$END" ]; then i=1; fi
+  if [ "$selected_channel" -lt "1" ]; then selected_channel=$END; fi
+  if [ "$selected_channel" -gt "$END" ]; then selected_channel=1; fi
 
-  if [ "$i" -ne "$j" ]
+  if [ "$selected_channel" -ne "$current_channel" ]
   then
-    echo $i: ${name[$i]}
-    kill $pid
-    mplayer "${url[$i]}" < /dev/null > $APP_HOME/mplayer.log 2>&1 &
-    j=$i
-    echo $j > $APP_HOME/current_channel
-    pid=$!
-    print_title &
-    print_title_pid=$!
+    current_channel_name=${name[$selected_channel]}
+    echo $selected_channel: $current_channel_name
+    kill $mplayer_pid
+    mplayer "${url[$selected_channel]}" < /dev/null > $APP_HOME/mplayer.log 2>&1 & mplayer_pid=$!
+    current_channel=$selected_channel
+    echo $current_channel > $APP_HOME/current_channel    
+    update_display & update_display_pid=$!
   fi  
 done
 
